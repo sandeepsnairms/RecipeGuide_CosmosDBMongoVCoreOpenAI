@@ -4,30 +4,33 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
-using Newtonsoft.Json;
-using MongoDB.Bson;
+using System.Text.RegularExpressions;
 
-namespace CosmosRecipeGuide
+
+namespace ContosoUtilities
 {
     internal static class Utility
     {
-        public static List<Recipe> ParseDocuments(string Folderpath)
+        // string endpopint= ExtractTextBetween(diagnostics.ToString(), "rntbd://", ":");
+        public static string ExtractTextBetween(string input, string startMarker, string endMarker)
         {
-            List<Recipe> ret = new List<Recipe>();
+            // Define a regular expression pattern to match text between startMarker and endMarker
+            string pattern = $@"{Regex.Escape(startMarker)}(.*?){Regex.Escape(endMarker)}";
 
-            Directory.GetFiles(Folderpath).ToList().ForEach(f =>
-                {
-                    var jsonString= System.IO.File.ReadAllText(f);
-                    Recipe recipe = JsonConvert.DeserializeObject<Recipe>(jsonString);
-                    recipe.id = recipe.name.ToLower().Replace(" ", "");
-                    ret.Add(recipe);
+            // Use Regex.Match to find the first match
+            Match match = Regex.Match(input, pattern);
 
-                }
-            );
-
-
-            return ret;
-
+            // Check if a match was found
+            if (match.Success)
+            {
+                // Extract the captured group (the text between startMarker and endMarker)
+                return match.Groups[1].Value;
+            }
+            else
+            {
+                // Return a default value or throw an exception, depending on your requirements
+                return "TextNotFound";
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "CosmosRecipeGuide": {
+    "ContosoUtilities": {
       "commandName": "Project",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"

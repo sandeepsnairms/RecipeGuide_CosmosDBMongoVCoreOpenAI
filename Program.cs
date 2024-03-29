@@ -1,48 +1,53 @@
 ﻿using Microsoft.Extensions.Configuration;
-using CosmosRecipeGuide;
+using ContosoUtilities;
 using Spectre.Console;
 using Console = Spectre.Console.AnsiConsole;
 using System.Net;
-using CosmosRecipeGuide.Services;
 using System.Net.Quic;
 using System.Diagnostics;
 using Newtonsoft.Json;
-using CosmosRecipeGuide.Service;
 using System.Reflection.Metadata;
+using System.Security.Cryptography;
+using ContosoUtilities.Service;
+using Bogus;
+using System.Text.RegularExpressions;
+using Newtonsoft.Json.Linq;
+using System.Dynamic;
+using System.ComponentModel;
+using Microsoft.Azure.Cosmos;
+using Bogus.DataSets;
+using Microsoft.Azure.Cosmos.Fluent;
+using System.Xml.Linq;
+using System;
+using System.Runtime;
+using Bogus.Bson;
 
-namespace CosmosRecipeGuide
+namespace ContosoUtilities
 {
     internal class Program
     {
 
-        static OpenAIService openAIEmbeddingService = null;
-        static CosmosDBMongoVCoreService cosmosMongoVCoreService = null;
-
-        private static readonly string vectorSearchIndex = "vectorSearchIndex";
+        static Faker f=new Faker();
 
         static async Task Main(string[] args)
         {
 
             AnsiConsole.Write(
-               new FigletText("Contoso Recipes")
+               new FigletText("Contoso Systems")
                .Color(Color.Red));
 
             Console.WriteLine("");
 
             var configuration = new ConfigurationBuilder()
-                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
-                .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true);
+                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+                //.AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true);
 
-            var config = configuration.Build();
+            var config = configuration.Build();                       
 
-            
-            initCosmosDBService(config);
-            
-
-            const string cosmosUpload = "1.\tUpload recipe(s) to Cosmos DB";
-            const string vectorize = "2.\tVectorize the recipe(s) and store it in Cosmos DB";
-            const string search = "3.\tAsk AI Assistant (search for a recipe by name or description, or ask a question)";
-            const string exit = "4.\tExit this Application";
+           
+            const string firewall = "1.\tBlock region for few seconds";
+            const string genload = "2.\tLoad test for few seconds";
+            const string exit = "3.\tExit this application";
 
 
             while (true)
@@ -54,251 +59,165 @@ namespace CosmosRecipeGuide
                           .PageSize(10)
                           .MoreChoicesText("[grey](Move up and down to reveal more options)[/]")
                           .AddChoices(new[] {
-                            cosmosUpload,vectorize ,search, exit
+                            firewall,genload, exit
                           }));
 
 
                 switch (selectedOption)
                 {
-                    case cosmosUpload:
-                        UploadRecipes(config);
+                    case firewall:
+                        AddFirewallRule(config).GetAwaiter().GetResult();
                         break;
-                    case vectorize:
-                        GenerateEmbeddings(config);                        
-                        break;
-                    case search:
-                        PerformSearch(config);
+                    case genload:
+                        GenerateCosmosLoad(config);
                         break;
                     case exit:
                         return;                        
                 }
-            }       
-                 
+            }                        
         }
+                
+
+        private static void GenerateCosmosLoad(IConfiguration configuration)
+        {           
+
+            int totalseconds = 60;
+
+            AnsiConsole.Status()
+            .Start("Processing...", ctx =>
+            {
+
+                ctx.Spinner(Spinner.Known.Star);
+                ctx.SpinnerStyle(Style.Parse("green"));
+
+                ctx.Status("Getting Cosmos DB Client Deatils");
+
+               
+                string databaseName = configuration["CosmosDatabase"];
+                string containerName = configuration["CosmosContainer"];
+
+                //static  singleton approach
+                
+               CosmosReadData cdbReadData = new CosmosReadData();
+
+               CosmosClient cosmosClient = cdbReadData.getCosmosClient(configuration);  
+
+               var database = cosmosClient?.GetDatabase(databaseName);
+               var container = database?.GetContainer(containerName);
+               
+                //end
+
+                Stopwatch sw = Stopwatch.StartNew();
+                sw.Start();
+
+                // Number of threads to use
+                int numThreads = 10;
+                
+
+                ctx.Status($"Starting {numThreads} threads for ~{totalseconds} seconds");
+                int rounds=1;
+                do
+                {
+                    
+
+                    // Create an array to hold the threads
+                    Thread[] threads = new Thread[numThreads];
+
+                    for (int i = 0; i < numThreads; i++)
+                    {
+                        // Use lambda expression to capture unique values of i for each thread
+                        int threadIndex = i;
+                        threads[i] = new Thread(() =>
+                        {
+                            //New Client per thread
+                            /*
+                            CosmosReadData cdbReadData = new CosmosReadData();
+
+                            CosmosClient cClient = cdbReadData.getCosmosClient(configuration);
+
+                            var database = cClient?.GetDatabase(databaseName);
+                            var container = database?.GetContainer(containerName);
+
+                            cdbReadData.readData(cClient, container);
+                            */
+                            //end
 
 
-        private static OpenAIService initOpenAIService(IConfiguration config)
+                            // Invoke Static CosmosReadData function with parameters
+                            cdbReadData.readData(cosmosClient, container);
+
+                            var throttleCount = cdbReadData.ThrottleCount;
+
+                            // Print thread index for identification
+                            ctx.Status($"Thread {rounds}#{threadIndex + 1} completed. Threads running for {sw.Elapsed.TotalSeconds} seconds. {throttleCount} requests were throttled");
+                        });
+                    }
+
+                    // Start all the threads
+                    foreach (var thread in threads)
+                    {
+                        thread.Start();
+                    }
+
+                    // Wait for all threads to complete
+                    foreach (var thread in threads)
+                    {
+                        thread.Join();
+                    }
+                    rounds++;
+                } while (sw.Elapsed.TotalSeconds < totalseconds);
+
+        });
+    }
+
+        private static async Task AddFirewallRule(IConfiguration configuration)
         {
-            string endpoint = config["OpenAIEndpoint"];
-            string key = config["OpenAIKey"];
-            string embeddingDeployment = config["OpenAIEmbeddingDeployment"];
-            string completionsDeployment = config["OpenAIcompletionsDeployment"];
-            string maxToken = config["OpenAIMaxToken"];
-            
-            return new OpenAIService(endpoint, key, embeddingDeployment, completionsDeployment,maxToken);
-        }
 
-
-        private static void initCosmosDBService( IConfiguration config)
-        {
-            
-            long recipeWithEmbedding = 0;
-            long recipeWithNoEmbedding = 0;
 
             AnsiConsole.Status()
                 .Start("Processing...", ctx =>
                 {
-                    
+
                     ctx.Spinner(Spinner.Known.Star);
                     ctx.SpinnerStyle(Style.Parse("green"));
 
-                    ctx.Status("Creating Cosmos DB Client ..");
-                    if (initVCoreMongoService(config) == true)
+
+                    ctx.Status("Getting Cosmos DB Client Deatils");
+
+                    CosmosReadData cdbReadData = new CosmosReadData();
+
+                    CosmosClient cosmosClient = cdbReadData.getCosmosClient(configuration);
+
+                    string databaseName = configuration["CosmosDatabase"];
+                    string containerName = configuration["CosmosContainer"];
+
+                    var database = cosmosClient?.GetDatabase(databaseName);
+                    var container = database?.GetContainer(containerName);
+
+                    QueryDefinition query = new QueryDefinition($"SELECT TOP 1 * FROM c");
+
+                    string regionalEndpoint = cdbReadData.getRegionalEndpointAsync(container, query).GetAwaiter().GetResult();
+
+                    ctx.Status("Building Firewall Rule");
+
+                    string ipAddress = Dns.GetHostAddresses(regionalEndpoint)[0].ToString();
+
+                    ctx.Status("Adding Firewall Rule");
+                    Firewall.AddFirewallRule("Failover Test", ipAddress);
+
+                    int counter = 60;
+                    while (counter > 0)
                     {
-
-                        ctx.Status("Getting Recipe Stats");
-                        recipeWithEmbedding = cosmosMongoVCoreService.GetRecipeCountAsync(true).GetAwaiter().GetResult();
-                        recipeWithNoEmbedding = cosmosMongoVCoreService.GetRecipeCountAsync(false).GetAwaiter().GetResult();
+                        Thread.Sleep(1000);
+                        ctx.Status($"FireWall Rule Time Remaining  : {counter} seconds");
+                        counter--;
                     }
-                                        
-                    
 
+                    Firewall.RemoveFirewallRule("Failover Test");
+                    ctx.Status("Firewall Rule Remove");
+                    Thread.Sleep(2 * 1000);
                 });
-
-            AnsiConsole.MarkupLine($"We have [green]{recipeWithEmbedding}[/] vectorized recipe(s) and [red]{recipeWithNoEmbedding}[/] non vectorized recipe(s).");
-            Console.WriteLine("");
-
-        }
-
-
-        private static bool  initVCoreMongoService(IConfiguration config)
-        {            
-
-            string vcoreConn = config["MongoVcoreConnection"];
-            string vCoreDB = config["MongoVcoreDatabase"];
-            string vCoreColl = config["MongoVcoreCollection"];
-            string maxResults = config["maxVectorSearchResults"];
-
-            cosmosMongoVCoreService = new CosmosDBMongoVCoreService(vcoreConn, vCoreDB, vCoreColl, maxResults);
-
-            return true;
-        }
-
-
-        private static void UploadRecipes(IConfiguration config)
-        {
-            string folder = config["RecipeLocalFolder"];
-            long recipeWithEmbedding = 0;
-            long recipeWithNoEmbedding = 0;
-
-            List<Recipe> recipes=null;
-
-            AnsiConsole.Status()
-               .Start("Processing...", ctx =>
-               {
-                   ctx.Spinner(Spinner.Known.Star);
-                   ctx.SpinnerStyle(Style.Parse("green"));
-
-                   ctx.Status("Parsing Recipe files..");
-                   recipes = Utility.ParseDocuments(folder);                  
-                  
-
-                   ctx.Status($"Uploading Recipe(s)..");
-                   foreach (Recipe recipe in recipes)
-                   {
-                       cosmosMongoVCoreService.UpsertVectorAsync(recipe).GetAwaiter().GetResult();
-                   }
-
-                   ctx.Status("Getting Updated Recipe Stats");
-                   recipeWithEmbedding = cosmosMongoVCoreService.GetRecipeCountAsync(true).GetAwaiter().GetResult();
-                   recipeWithNoEmbedding = cosmosMongoVCoreService.GetRecipeCountAsync(false).GetAwaiter().GetResult();
-
-               });
-
-            AnsiConsole.MarkupLine($"Uploaded [green]{recipes.Count}[/] recipe(s).We have [teal]{recipeWithEmbedding}[/] vectorized recipe(s) and [red]{recipeWithNoEmbedding}[/] non vectorized recipe(s).");
-            Console.WriteLine("");
-
-        }
-        
-
-       private static void PerformSearch(IConfiguration config)
-        {
-
-            string chatCompletion=string.Empty;
-
-            string userQuery = Console.Prompt(
-                new TextPrompt<string>("Type the recipe name or your question, hit enter when ready.")
-                    .PromptStyle("teal")
-            );
-
-            
-            AnsiConsole.Status()
-               .Start("Processing...", ctx =>
-               {
-                   ctx.Spinner(Spinner.Known.Star);
-                   ctx.SpinnerStyle(Style.Parse("green"));
-
-                   if (openAIEmbeddingService == null)
-                   {
-                       ctx.Status("Connecting to Open AI Service..");
-                       openAIEmbeddingService = initOpenAIService(config);
-                   }
-
-
-                   if (cosmosMongoVCoreService == null)
-                   {
-                       ctx.Status("Connecting to Azure Cosmos DB for MongoDB vCore..");
-                       initVCoreMongoService(config);
-
-                       ctx.Status("Checking for Index in Azure Cosmos DB for MongoDB vCore..");
-                       if (cosmosMongoVCoreService.CheckIndexIfExists(vectorSearchIndex) == false)
-                       {
-                           AnsiConsole.WriteException(new Exception("Vector Search Index not Found, Please build the index first."));
-                           return;
-                       }
-                   }
-
-                   ctx.Status("Converting User Query to Vector..");
-                   var embeddingVector = openAIEmbeddingService.GetEmbeddingsAsync(userQuery).GetAwaiter().GetResult();
-
-                   ctx.Status("Performing Vector Search from Cosmos DB (RAG pattern)..");
-                   var retrivedDocs = cosmosMongoVCoreService.VectorSearchAsync(embeddingVector).GetAwaiter().GetResult();
-
-                   ctx.Status($"Priocessing {retrivedDocs.Count} to generate Chat Response  using OpenAI Service..");
-
-                   string retrivedReceipeNames = string.Empty;
-                   
-                   foreach(var recipe in retrivedDocs)
-                   {
-                       recipe.embedding = null; //removing embedding to reduce tokens during chat completion
-                       retrivedReceipeNames += ", " + recipe.name; //to dispay recipes submitted for Completion
-                   }
-
-                   ctx.Status($"Processing '{retrivedReceipeNames}' to generate Completion using OpenAI Service..");
-
-                   (string completion, int promptTokens, int completionTokens) = openAIEmbeddingService.GetChatCompletionAsync(userQuery, JsonConvert.SerializeObject(retrivedDocs)).GetAwaiter().GetResult();
-                   chatCompletion = completion;
-   
-               });
-
-            Console.WriteLine("");
-            Console.Write(new Rule($"[silver]AI Assistant Response[/]") { Justification = Justify.Center });
-            AnsiConsole.MarkupLine(chatCompletion);
-            Console.WriteLine("");
-            Console.WriteLine("");
-            Console.Write(new Rule($"[yellow]****[/]") { Justification = Justify.Center });
-            Console.WriteLine("");
-
-        }
-
-        private static void GenerateEmbeddings(IConfiguration config)
-        {
-            long recipeWithEmbedding = 0;
-            long recipeWithNoEmbedding = 0;
-            long recipeCount = 0;
-
-            AnsiConsole.Status()
-               .Start("Processing...", ctx =>
-               {
-                   ctx.Spinner(Spinner.Known.Star);
-                   ctx.SpinnerStyle(Style.Parse("green"));
-
-                   if (openAIEmbeddingService == null)
-                   {
-                       ctx.Status("Connecting to Open AI Service..");
-                       openAIEmbeddingService = initOpenAIService(config);
-                   }
-
-
-                   if (cosmosMongoVCoreService == null)
-                   {
-                       ctx.Status("Connecting to VCore Mongo..");
-                       initVCoreMongoService(config);
-                   }   
-
-                    ctx.Status("Building VCore Index..");
-                    cosmosMongoVCoreService.CreateVectorIndexIfNotExists(vectorSearchIndex);                       
-
-                   
-                   ctx.Status("Getting recipe(s) to vectorize..");
-                   var Recipes = cosmosMongoVCoreService.GetRecipesToVectorizeAsync().GetAwaiter().GetResult();
-                                      
-                   foreach ( var recipe in Recipes ) 
-                   {
-                       recipeCount++;
-                       ctx.Status($"Vectorizing Recipe# {recipeCount}..");
-                       var embeddingVector=openAIEmbeddingService.GetEmbeddingsAsync(JsonConvert.SerializeObject(recipe)).GetAwaiter().GetResult();
-                       recipe.embedding = embeddingVector.ToList();
-                   }
-
-                   ctx.Status($"Indexing {Recipes.Count} document(s) on Azure Cosmos DB for MongoDB vCore..");
-                   foreach (var recipe in Recipes)
-                   {
-                       cosmosMongoVCoreService.UpsertVectorAsync(recipe).GetAwaiter().GetResult(); 
-                   }
-
-                   ctx.Status("Getting Updated Recipe Stats");
-                   recipeWithEmbedding = cosmosMongoVCoreService.GetRecipeCountAsync(true).GetAwaiter().GetResult();
-                   recipeWithNoEmbedding = cosmosMongoVCoreService.GetRecipeCountAsync(false).GetAwaiter().GetResult();
-
-               });
-
-            AnsiConsole.MarkupLine($"Vectorized [teal]{recipeCount}[/] recipe(s). We have [green]{recipeWithEmbedding}[/] vectorized recipe(s) and [red]{recipeWithNoEmbedding}[/] non vectorized recipe(s).");
-            Console.WriteLine("");
-
-        }
-
-       
+        }   
 
     }
 }
